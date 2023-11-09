@@ -1,5 +1,5 @@
 start:
-b go
+b fn_load
 nop
 
 payload:
@@ -17,7 +17,7 @@ endOfFixedExecutableMemoryPool:
 jitWriteSeparateHeapsFunction:
 .xword 0x657469725774696a
 
-go:
+fn_load:
 stp  x19, x20, [sp, -0x60]!
 stp  x21, x22, [sp, 0x10]
 stp  x23, x24, [sp, 0x20]
@@ -432,7 +432,7 @@ b.eq rebase_loop
 
 mov  x0, 0x66
 movk x0, 0xa, lsl 0x20
-bl   dead
+bl   fn_fa11dead
 
 REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
 cmp  opcode_, 0x20
@@ -549,7 +549,7 @@ b    rebase_loop
 REBASE_OPCODE_UNKNOWN:
 mov  x0, 0x8d
 movk x0, 0xa, lsl 0x20
-bl   dead
+bl   fn_fa11dead
 
 rebase_done:
 add  sp, sp, 0x100
@@ -668,7 +668,7 @@ b.ne BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
 
 mov  x0, 0xbc
 movk x0, 0xa, lsl 0x20
-bl   dead
+bl   fn_fa11dead
 
 BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
 cmp  opcode_, 0x70
@@ -770,7 +770,7 @@ b    BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB_loop
 BIND_OPCODE_UNKNOWN:
 mov  x0, 0xd6
 movk x0, 0xa, lsl 0x20
-bl   dead
+bl   fn_fa11dead
 
 bind_done:
 
@@ -802,8 +802,8 @@ tbnz w7, 0x7, read_uleb128_loop
 mov  x1, x9
 ret
 
-dead:
-mov  w10, 0xdead
+fn_fa11dead:
+mov  w10, 0xfa11dead
 mov  x11, 0xbad000000000
 add  x11, x11, x0
 str  w10, [x11]
