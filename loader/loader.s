@@ -1,6 +1,6 @@
 start:
 b fn_load
-nop
+b fn_memcpyx
 
 payload:
 .xword 0x64616f6c796170
@@ -252,24 +252,21 @@ mov  x0, load_command ; cmd
 ldr  x1, [sp, 0x120]  ; buffer
 mov  x2, sp           ; segments
 ldr  x3, [sp, 0x108]  ; linkedit_base
-ldr  x4, dlsym
-mov  x5, 0x10         ; bind_off
+mov  x4, 0x10         ; bind_off
 bl   fn_bind
 
 ;mov  x0, load_command ; cmd
 ;ldr  x1, [sp, 0x120]  ; buffer
 ;mov  x2, sp           ; segments
 ;ldr  x3, [sp, 0x108]  ; linkedit_base
-;ldr  x4, dlsym
-;mov  x5, 0x18         ; weak_bind_off
+;mov  x4, 0x18         ; weak_bind_off
 ;bl   fn_bind
 
 mov  x0, load_command ; cmd
 ldr  x1, [sp, 0x120]  ; buffer
 mov  x2, sp           ; segments
 ldr  x3, [sp, 0x108]  ; linkedit_base
-ldr  x4, dlsym
-mov  x5, 0x20         ; lazy_bind_off
+mov  x4, 0x20         ; lazy_bind_off
 bl   fn_bind
 
 loop3continue:
@@ -588,11 +585,8 @@ opcode_         .req w24
 immediate_      .req w25
 symbol_name     .req x26
 segmet          .req x27
-dlsym           .req x28
 
-mov dlsym, x4
-
-add  x9, x0, x5
+add  x9, x0, x4
 ldp  w10, w11, [x9]   ; bind_off, bind_size
 add  x10, x3, x10           ; linkedit_base + bind_off
 add  start, x1, x10         ; start = buffer + linkedit_base + bind_off
@@ -703,7 +697,8 @@ b.ne BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB
 
 mov  x0, -0x2
 mov  x1, symbol_name
-blr  dlsym
+ldr  x8, dlsym
+blr  x8
 str  x0, [address]
 add  address, address, 0x8
 
@@ -715,7 +710,8 @@ b.ne BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED
 
 mov  x0, -0x2
 mov  x1, symbol_name
-blr  dlsym
+ldr  x8, dlsym
+blr  x8
 str  x0, [address]
 mov  x0, ptr
 mov  x1, end
@@ -732,7 +728,8 @@ b.ne BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB
 
 mov  x0, -0x2
 mov  x1, symbol_name
-blr  dlsym
+ldr  x8, dlsym
+blr  x8
 str  x0, [address]
 add  x10, immediate, 0x1
 add  address, address, x10, lsl 0x3
@@ -760,7 +757,8 @@ b.hs bind_loop
 
 mov  x0, -0x2
 mov  x1, symbol_name
-blr  dlsym
+ldr  x8, dlsym
+blr  x8
 str  x0, [address]
 add  x13, x13, 0x8
 add  address, address, x13
@@ -803,8 +801,88 @@ mov  x1, x9
 ret
 
 fn_fa11dead:
-mov  w10, 0xfa11dead
+mov  w10, 0xdead
 mov  x11, 0xbad000000000
 add  x11, x11, x0
 str  w10, [x11]
+ret
+
+
+fn_memcpyx:
+stp  x19, x20, [sp, -0x60]!
+stp  x21, x22, [sp, 0x10]
+stp  x23, x24, [sp, 0x20]
+stp  x25, x26, [sp, 0x30]
+stp  x27, x28, [sp, 0x40]
+stp  x29, x30, [sp, 0x50]
+add  x29, sp, 0x50
+sub  sp, sp, 0x100
+
+dst             .req x20
+src             .req x21
+len             .req x22
+memcpy          .req x23
+vm_protect      .req x24
+task_self       .req x24
+
+mov  dst, x0
+mov  src, x1
+mov  len, x2
+
+mov  x0, -0x2
+mov  x1, 0x656d           ; "memcpy"
+movk x1, 0x636d, lsl 0x10
+movk x1, 0x7970, lsl 0x20
+str  x1, [sp]
+mov  x1, sp
+ldr  x8, dlsym
+blr  x8
+mov  memcpy, x0
+
+mov  x0, -0x2
+mov  x1, 0x6d76           ; "vm_protect"
+movk x1, 0x705f, lsl 0x10
+movk x1, 0x6f72, lsl 0x20
+movk x1, 0x6574, lsl 0x30
+mov  x8, 0x7463
+stp  x1, x8, [sp]
+mov  x1, sp
+ldr  x8, dlsym
+blr  x8
+mov  vm_protect, x0
+
+mov x0, -0x2
+mov  x1, 0x616d           ; "vmach_task_self_"
+movk x1, 0x6863, lsl 0x10
+movk x1, 0x745f, lsl 0x20
+movk x1, 0x7361, lsl 0x30
+mov  x8, 0x5f6b
+movk x8, 0x6573, lsl 0x10
+movk x8, 0x666c, lsl 0x20
+movk x8, 0x005f, lsl 0x30
+stp  x1, x8, [sp]
+mov  x1, sp
+ldr  x8, dlsym
+blr  x8
+ldr  task_self, [x0]
+
+mov  x0, dst
+mov  x1, src
+mov  x2, len
+blr  memcpy
+
+mov  x0, task_self
+mov  x1, dst
+mov  x2, len
+mov  x3, 0
+mov  x4, 0x5 ; VM_PROT_READ|VM_PROT_EXECUTE
+blr  vm_protect
+
+add  sp, sp, 0x100
+ldp  x29, x30, [sp, 0x50]
+ldp  x27, x28, [sp, 0x40]
+ldp  x25, x26, [sp, 0x30]
+ldp  x23, x24, [sp, 0x20]
+ldp  x21, x22, [sp, 0x10]
+ldp  x19, x20, [sp], 0x60
 ret

