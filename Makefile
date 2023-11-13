@@ -35,6 +35,7 @@ loader.bin: loader/loader.o
 
 payload.dylib: payload/payload.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) -framework CoreFoundation -framework UIKit -dynamiclib -o $@ $^
+	jtool --sign --inplace $@
 
 clean:
 	rm -f SockPuppet2.dylib SockPuppet2_debug $(OBJ) loader.bin loader/loader.o payload.dylib payload/payload.o
